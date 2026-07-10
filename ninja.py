@@ -40,12 +40,18 @@ JUMP_GRAVITY = 68.0        # pulls the fighter back down
 
 # attack -> (windup, active, recovery, reach, damage, level, knockback, stamina)
 # level "high" whiffs on a crouching foe; level "low" whiffs on an airborne foe.
+# "grab" is a throw: it beats a block but whiffs on an airborne (jumping) foe.
+# punch and kick share the same reach — they differ in speed / damage / height.
+STRIKE_REACH = 7
 ATTACKS = {
-    "punch": dict(windup=0.05, active=0.08, recovery=0.18, reach=6,
+    "punch": dict(windup=0.05, active=0.08, recovery=0.18, reach=STRIKE_REACH,
                   damage=8, level="high", knockback=9.0, stamina=10),
-    "kick":  dict(windup=0.14, active=0.10, recovery=0.34, reach=9,
+    "kick":  dict(windup=0.14, active=0.10, recovery=0.34, reach=STRIKE_REACH,
                   damage=16, level="low", knockback=20.0, stamina=22),
+    "grab":  dict(windup=0.18, active=0.06, recovery=0.42, reach=4,
+                  damage=26, level="grab", knockback=7.0, stamina=30),
 }
+GRAB_KNOCKDOWN = 0.55       # foe is floored (long stun) after a slam
 # --- AI difficulty ---------------------------------------------------------
 # react   : (min, max) seconds between offensive decisions (higher = slower/dumber)
 # read    : scales dodge/block success vs an incoming attack (lower = whiffs defense)
@@ -305,6 +311,16 @@ def gap(a, b):
     return abs(a.x - b.x)
 
 
+def grab_connects(atk, foe):
+    """A throw lands if the (grounded) foe is within grab reach in front of atk.
+    Jumping is the escape — an airborne foe can't be grabbed."""
+    if foe.height_level() == "air":
+        return False
+    reach = ATTACKS["grab"]["reach"]
+    lo, hi = sorted((atk.x, atk.x + atk.facing * reach))
+    return lo - 1 <= foe.x <= hi + 1
+
+
 def resolve_collision(a, b, left_wall, right_wall):
     """Two grounded bodies can't share space — shove them apart symmetrically."""
     # jumping fighters pass over each other
@@ -385,6 +401,13 @@ def ai_think(ai, foe, now, left_wall, right_wall, diff):
 
     punch_reach = ATTACKS["punch"]["reach"]
     kick_reach = ATTACKS["kick"]["reach"]
+    grab_reach = ATTACKS["grab"]["reach"]
+
+    # --- break a turtle: grab a blocking foe within throw range ---
+    if foe.blocking and d <= grab_reach and ai.can_spend(ATTACKS["grab"]["stamina"]) \
+            and random.random() < aggression:
+        ai.start_attack("grab", now)
+        return
 
     # --- whiff punish: foe stuck in recovery is a free hit ---
     if foe.state == "recovery" and random.random() < diff["punish"]:
@@ -428,6 +451,8 @@ def resolve_hits(a, b, now, particles=None, ground_y=0, popups=None):
     hitstop = 0.0
     shake = 0.0
     for atk, foe in ((a, b), (b, a)):
+        if atk.attack == "grab":
+            continue                     # throws are resolved by the grab handler
         if atk.state == "active" and not atk.has_hit:
             tip = atk.attack_tip()
             lo, hi = sorted((atk.x, tip))
@@ -473,6 +498,7 @@ POSES = {
     "hitstun": [" x ", "\\|/", "/ \\"],
     "crouch":  [" o ", "/=\\"],
     "air":     ["\\o/", " | ", "> <"],
+    "grab":    [" O__", "/|  ", " |  ", "/ \\"],   # reaching to seize the foe
 }
 _MIRROR = str.maketrans("/\\<>()[]{}", "\\/><)(][}{")
 
@@ -495,6 +521,8 @@ def sprite(f):
         pose = "punch"
     elif f.state in ("windup", "active") and f.attack == "kick":
         pose = "kick"
+    elif f.state in ("windup", "active") and f.attack == "grab":
+        pose = "grab"
     else:
         pose = "idle"
     art = POSES[pose]
@@ -597,6 +625,189 @@ def draw(win, player, ai, ground_y, msg=None, particles=None, popups=None,
 
     win.noutrefresh()
     curses.doupdate()
+
+
+# --- KO finisher: the "kusti" slam ----------------------------------------
+
+# Cinematic close-up poses (drawn facing right; mirror() flips them).
+FIN_GRAB  = [" O_", "/| ", "/| ", "/ \\"]     # winner seizing the foe
+FIN_LIFT  = ["\\O/", " | ", " | ", "/ \\"]     # winner hoisting overhead
+FIN_SLAM  = [" O ", " |\\", "/|  ", "/ \\"]    # winner driving down
+FIN_HELD  = [" | ", "/|\\", " X "]             # foe hoisted upside-down (head X low)
+FIN_SPLAT = ["         ", "\\_ X _/", "‾‾‾‾‾‾‾"]  # foe crashed flat
+
+
+def _blit(win, lines, cx, base_y, attr, sx=0, sy=0):
+    """Draw center-aligned `lines` with their bottom row sitting on base_y."""
+    h, w = win.getmaxyx()
+    for i, ln in enumerate(lines):
+        y = base_y - (len(lines) - 1) + i + sy
+        x = cx - len(ln) // 2 + sx
+        if 0 <= y < h and 0 <= x < w - len(ln):
+            try:
+                win.addstr(y, x, ln, attr)
+            except curses.error:
+                pass
+
+
+def play_finisher(stdscr, winner, loser, ground_y):
+    """Slow-motion close-up: winner grabs the loser, lifts them overhead, slams down."""
+    h, w = stdscr.getmaxyx()
+    cx = w // 2
+    face = winner.facing or 1
+    gy = ground_y + 2                       # give the slam a little more floor
+
+    red = curses.color_pair(2)
+    cyan = curses.color_pair(3)
+    yellow = curses.color_pair(4)
+    white = curses.color_pair(5)
+    wcol = cyan if winner.name == "P1" else yellow
+
+    particles = []
+    LIFT_H = 6                              # rows the foe is hoisted above the ground
+
+    def wpose(lines):
+        return lines if face > 0 else mirror(lines)
+
+    def hpose(lines):
+        return lines if face > 0 else mirror(lines)
+
+    def frame(w_lines, l_lines, l_h, banner=None, shake=0.0, dt=0.045):
+        stdscr.erase()
+        sx = random.randint(-2, 2) if shake > 0.4 else 0
+        sy = random.randint(-1, 1) if shake > 1.2 else 0
+        # dim ground line for the close-up
+        if 0 <= gy + 1 + sy < h:
+            stdscr.hline(gy + 1 + sy, 1, curses.ACS_HLINE, w - 2)
+        # winner stands one step back from center; foe centred (over the winner)
+        wx = cx - face * 2
+        _blit(stdscr, wpose(w_lines), wx, gy, wcol | curses.A_BOLD, sx, sy)
+        if l_lines is not None:
+            _blit(stdscr, hpose(l_lines), cx, gy - int(round(l_h)),
+                  red | curses.A_BOLD, sx, sy)
+        for p in particles:
+            px, py = int(p.x) + sx, int(round(p.y)) + sy
+            if 0 <= py < h and 0 <= px < w - 1:
+                try:
+                    stdscr.addstr(py, px, p.glyph(), red | curses.A_BOLD)
+                except curses.error:
+                    pass
+        if banner:
+            by = max(1, gy // 2)
+            stdscr.addstr(by, max(0, (w - len(banner)) // 2), banner,
+                          curses.A_BOLD | curses.A_REVERSE | wcol)
+        stdscr.noutrefresh()
+        curses.doupdate()
+        for p in particles:
+            p.update(dt)
+        particles[:] = [p for p in particles if not p.dead(gy + 1)]
+        time.sleep(dt)
+
+    # 1) GRAB — seize the stunned foe (still on the ground, slumped)
+    for _ in range(7):
+        frame(FIN_GRAB, POSES["hitstun"], 0, banner="  GOTCHA!  ", dt=0.05)
+
+    # 2) LIFT — hoist overhead, slowing near the top for weight
+    steps = 12
+    for i in range(steps + 1):
+        t = i / steps
+        eased = 1 - (1 - t) * (1 - t)       # ease-out — heavy at the top
+        frame(FIN_LIFT, FIN_HELD, LIFT_H * eased,
+              banner="  KUSTI!  ", dt=0.045)
+
+    # 3) HOLD — the crowd holds its breath
+    for _ in range(6):
+        frame(FIN_LIFT, FIN_HELD, LIFT_H, banner="  KUSTI!  ", dt=0.06)
+
+    # 4) SLAM — drive them into the dirt, accelerating down
+    steps = 5
+    for i in range(1, steps + 1):
+        t = i / steps
+        drop = LIFT_H * (1 - t * t)          # ease-in — speeds up on the way down
+        frame(FIN_SLAM, FIN_HELD, drop, banner="  KUSTI!  ", dt=0.03)
+
+    # 5) IMPACT — dust and blood erupt, screen kicks hard
+    spawn_burst(particles, cx, gy - 1, direction=face, blood=True)
+    spawn_burst(particles, cx, gy - 1, direction=-face, blood=True)
+    for i in range(10):
+        frame(FIN_SLAM, FIN_SPLAT, 0, banner="  S L A M ! !  ",
+              shake=2.6 * (1 - i / 10), dt=0.045)
+
+    # 6) STAND TALL — the finish settles into the K.O.
+    for _ in range(8):
+        frame(FIN_LIFT, FIN_SPLAT, 0, banner="  K.O.  ", dt=0.06)
+
+
+def play_throw(stdscr, attacker, foe, ground_y, p1, ai):
+    """Quick in-arena kusti slam for a landed grab mid-fight (non-lethal).
+
+    Shorter than the KO finisher and rendered at the fighters' position, with
+    the HUD kept up for continuity.
+    """
+    h, w = stdscr.getmaxyx()
+    face = attacker.facing or 1
+    gy = ground_y
+    cx = max(6, min(w - 6, int(attacker.x)))
+
+    green = curses.color_pair(1)
+    red = curses.color_pair(2)
+    cyan = curses.color_pair(3)
+    yellow = curses.color_pair(4)
+    wcol = cyan if attacker.name == "P1" else yellow
+    particles = []
+    LIFT_H = 4
+
+    def wp(lines):
+        return lines if face > 0 else mirror(lines)
+
+    def frame(w_lines, l_lines, l_h, banner=None, shake=0.0, dt=0.045):
+        stdscr.erase()
+        sx = random.randint(-2, 2) if shake > 0.4 else 0
+        sy = random.randint(-1, 1) if shake > 1.2 else 0
+        # HUD stays put
+        bar_w = max(10, (w - 20) // 2 - 8)
+        draw_bar(stdscr, 1, 2, "P1", p1.hp, bar_w, green)
+        draw_bar(stdscr, 1, w - (bar_w + 12), "AI", ai.hp, bar_w, red)
+        if 0 <= gy + 1 + sy < h:
+            stdscr.hline(gy + 1 + sy, 1, curses.ACS_HLINE, w - 2)
+        wx = cx - face * 2
+        _blit(stdscr, wp(w_lines), wx, gy, wcol | curses.A_BOLD, sx, sy)
+        if l_lines is not None:
+            _blit(stdscr, wp(l_lines), cx, gy - int(round(l_h)),
+                  red | curses.A_BOLD, sx, sy)
+        for p in particles:
+            px, py = int(p.x) + sx, int(round(p.y)) + sy
+            if 0 <= py < h and 0 <= px < w - 1:
+                try:
+                    stdscr.addstr(py, px, p.glyph(), red | curses.A_BOLD)
+                except curses.error:
+                    pass
+        if banner:
+            stdscr.addstr(max(1, gy // 2), max(0, (w - len(banner)) // 2),
+                          banner, curses.A_BOLD | curses.A_REVERSE | wcol)
+        stdscr.noutrefresh()
+        curses.doupdate()
+        for p in particles:
+            p.update(dt)
+        particles[:] = [p for p in particles if not p.dead(gy + 1)]
+        time.sleep(dt)
+
+    # hoist
+    for i in range(1, 7):
+        t = i / 6
+        frame(FIN_LIFT, FIN_HELD, LIFT_H * (1 - (1 - t) * (1 - t)),
+              banner="  KUSTI!  ")
+    for _ in range(2):
+        frame(FIN_LIFT, FIN_HELD, LIFT_H, banner="  KUSTI!  ", dt=0.05)
+    # slam down
+    for i in range(1, 5):
+        t = i / 4
+        frame(FIN_SLAM, FIN_HELD, LIFT_H * (1 - t * t), dt=0.028)
+    # impact
+    spawn_burst(particles, cx, gy - 1, direction=face, blood=True)
+    for i in range(7):
+        frame(FIN_SLAM, FIN_SPLAT, 0, banner="  SLAM!  ",
+              shake=2.4 * (1 - i / 7), dt=0.04)
 
 
 # --- Main loop ------------------------------------------------------------
@@ -723,6 +934,8 @@ def game(stdscr):
                 player.start_attack("punch", gt)
             elif c == ord("k"):
                 player.start_attack("kick", gt)
+            elif c == ord("g"):
+                player.start_attack("grab", gt)
             elif c in (ord(" "), ord("l")):
                 held_block = True
 
@@ -760,6 +973,27 @@ def game(stdscr):
         # --- stamina regen ---
         player.regen(dt)
         ai.regen(dt)
+
+        # --- grab / throw resolution (before strikes) ---
+        for atk, foe in ((player, ai), (ai, player)):
+            if atk.attack == "grab" and atk.state == "active" and not atk.has_hit:
+                atk.has_hit = True
+                if grab_connects(atk, foe):
+                    before = foe.hp
+                    kb = atk.facing * ATTACKS["grab"]["knockback"]
+                    foe.take_hit(ATTACKS["grab"]["damage"] * atk.dmg_scale, gt, kb)
+                    if foe.hp <= 0:
+                        # lethal grab -> let the win check run the KO finisher
+                        atk.state = "recovery"
+                        atk.state_until = gt + ATTACKS["grab"]["recovery"]
+                    else:
+                        # non-lethal: quick in-arena slam, then floor the foe
+                        play_throw(stdscr, atk, foe, ground_y, player, ai)
+                        foe.state = "hitstun"
+                        foe.state_until = gt + GRAB_KNOCKDOWN
+                        atk.state = "recovery"
+                        atk.state_until = gt + ATTACKS["grab"]["recovery"]
+                        last_real = time.perf_counter()   # swallow the anim time
 
         # --- combat ---
         hs, sh = resolve_hits(player, ai, gt, particles, ground_y, popups)
@@ -801,10 +1035,19 @@ def game(stdscr):
         if elapsed < FRAME:
             time.sleep(FRAME - elapsed)
 
-    # end screen
+    # --- finisher: the kusti slam (only on a decisive KO, not a double-KO) ---
     stdscr.nodelay(False)
-    draw(stdscr, player, ai, ground_y, msg=f"  {winner}  press any key  ")
-    stdscr.getch()
+    if winner == "P1 WINS!":
+        play_finisher(stdscr, player, ai, ground_y)
+    elif winner == "AI WINS!":
+        play_finisher(stdscr, ai, player, ground_y)
+
+    # end screen — wait for ENTER (q/esc also exits)
+    draw(stdscr, player, ai, ground_y, msg=f"  {winner}  —  press ENTER  ")
+    while True:
+        k = stdscr.getch()
+        if k in (ord("\n"), curses.KEY_ENTER, 10, 13, ord("q"), 27):
+            break
 
 
 def main():

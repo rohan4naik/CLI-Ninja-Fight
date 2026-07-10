@@ -40,6 +40,8 @@ Inspired by *Shadow Fight*.
   and you're left defenseless.
 - **Impact feedback** — knockback, brief freeze-frames, screen shake, blood/spark
   particles, and floating damage numbers sell every hit.
+- **Cinematic KO finisher** — win with a decisive blow and the camera closes in for
+  a slow-motion *kusti* slam to seal the round.
 - **Three difficulty tiers** — from a forgiving warm-up to a merciless read-everything
   opponent.
 - **Zero setup** — one file, standard library only, runs anywhere Python 3 does.
@@ -84,10 +86,14 @@ and fight.
 | `D` / `→` | Move right |
 | `W` / `↑` | Jump — clears low attacks |
 | `S` / `↓` | Crouch *(hold)* — ducks high attacks |
-| `J` | Punch — fast, short reach, strikes **high** |
-| `K` | Kick — slower, long reach, strikes **low** |
+| `J` | Punch — fast, light, strikes **high** |
+| `K` | Kick — slower, heavy, strikes **low** |
+| `G` | Grab — a throw that beats a block *(but whiffs if they jump)* |
 | `Space` / `L` | Block *(hold)* — greatly reduces incoming damage |
 | `Q` / `Esc` | Quit |
+
+Punch and kick have the **same range** — they differ in speed, power, and height,
+not reach.
 
 Movement is momentum-based: tap to build speed, release to glide to a halt.
 
@@ -99,14 +105,17 @@ Two fighters start with full health. **Drop your opponent's health to zero to wi
 
 **The core loop is a mix-up between three ideas:**
 
-1. **Spacing** — kicks out-range punches but recover slower. Control the gap and
-   you control the fight.
-2. **Height** — a punch sails over a crouch; a kick passes under a jump. Guess the
+1. **Height** — a punch sails over a crouch; a kick passes under a jump. Guess the
    incoming attack and dodge on the correct axis. You **can't** attack while
    airborne or crouched, so every dodge is a commitment.
+2. **The throw triangle** — strikes beat jumpers, a **grab** beats a blocker, and a
+   **jump** escapes the grab. Turtling behind block is never safe.
 3. **Resources** — blocking bleeds off damage but drains stamina and locks you out
-   of attacking. Every swing and hop costs stamina too, so reckless offense leaves
-   you empty and open.
+   of attacking. Every swing, hop, and throw costs stamina too, so reckless offense
+   leaves you empty and open.
+
+> Land a grab and your ninja hoists the opponent overhead for a **kusti slam** —
+> heavy damage and a hard knockdown. Miss, and the long recovery is a free punish.
 
 Landing a clean hit staggers your opponent, cancels whatever they were doing, and
 knocks them back. Get hit yourself and the same happens to you — so whiffing an
@@ -137,7 +146,9 @@ Choose on the start screen with `↑`/`↓` or `1`–`3`, confirm with `Enter`.
 - **Respect your stamina.** Keep enough in reserve to block or dodge — running dry
   in the danger zone loses rounds.
 - **Blocking isn't free.** It saves HP but costs stamina and tempo; use it to
-  weather a flurry, not as a resting state.
+  weather a flurry, not as a resting state — a **grab** will punish a held block.
+- **Grab on read, not on hope.** The throw is slow to start; use it when you expect
+  a block, and jump if you read one coming at you.
 
 ---
 
