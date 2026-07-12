@@ -2,13 +2,13 @@
 
 # 🥷 CLI-Ninja-Fight
 
-**A real-time 1v1 fighting game that lives entirely in your terminal.**
+**A real-time 1v1 fighting game for your terminal.**
 
-Punch, kick, block, and out-space a reactive AI opponent — rendered in pure ASCII,
-with momentum, knockback, hit-stop, and screen shake giving every blow real weight.
-Inspired by *Shadow Fight*.
+Punch, kick, grab, and parry your way past a reactive AI opponent. Every blow lands
+with knockback, freeze-frames, and screen shake for real fighting-game weight — all
+in crisp ASCII.
 
-`Python 3` · `zero dependencies` · `macOS / Linux`
+`macOS · Linux · WSL`
 
 </div>
 
@@ -16,35 +16,34 @@ Inspired by *Shadow Fight*.
 
 ## Table of Contents
 
-- [Highlights](#highlights)
+- [Features](#features)
 - [Requirements](#requirements)
-- [Install & Run](#install--run)
+- [Install & Play](#install--play)
 - [Controls](#controls)
 - [How to Play](#how-to-play)
 - [Difficulty](#difficulty)
 - [Strategy Tips](#strategy-tips)
 - [Troubleshooting](#troubleshooting)
-- [Project Layout](#project-layout)
 - [License](#license)
 
 ---
 
-## Highlights
+## Features
 
-- **Real-time combat** — 60 FPS action loop, no turns, no menus mid-fight.
-- **Weighty movement** — fighters carry momentum, glide to a stop, and shove each
-  other apart on contact instead of teleporting.
-- **Height mind-game** — punches strike high, kicks strike low. Read your opponent
-  and duck or hop the wrong guess.
-- **Stamina economy** — attacks, jumps, and blocking all cost stamina; overcommit
-  and you're left defenseless.
-- **Impact feedback** — knockback, brief freeze-frames, screen shake, blood/spark
-  particles, and floating damage numbers sell every hit.
-- **Cinematic KO finisher** — win with a decisive blow and the camera closes in for
-  a slow-motion *kusti* slam to seal the round.
-- **Three difficulty tiers** — from a forgiving warm-up to a merciless read-everything
-  opponent.
-- **Zero setup** — one file, standard library only, runs anywhere Python 3 does.
+- **Real-time combat** — no turns, no menus mid-fight. Pure reflex and reads.
+- **Height mind-game** — punches strike high, kicks strike low. Duck or hop the
+  wrong guess.
+- **Deep defense** — a held guard is a spectrum: **parry** a perfectly-timed block,
+  **chip** through a steady one, or **shatter** a guard that runs out of stamina.
+- **The throw triangle** — strikes beat jumpers, a grab beats a blocker, a jump
+  escapes the grab. Turtling is never safe.
+- **Stamina economy** — every attack, jump, and block spends stamina. Overcommit
+  and you're left wide open.
+- **Impact feedback** — knockback, freeze-frames, screen shake, particles, and
+  floating damage numbers sell every hit.
+- **Cinematic KO finisher** — close out a round with a slow-motion overhead slam.
+- **Three difficulty tiers** — from a forgiving warm-up to a merciless
+  read-everything opponent.
 
 ---
 
@@ -52,29 +51,29 @@ Inspired by *Shadow Fight*.
 
 | | |
 |---|---|
-| **Python** | 3.7 or newer |
-| **OS** | macOS or Linux (any Unix terminal with `curses`) |
+| **Python** | 3.7 or newer, available on your `PATH` |
+| **OS** | macOS, Linux, or Windows via **WSL** |
 | **Terminal** | minimum **50 × 12** characters; color recommended |
-| **Dependencies** | none — uses only the Python standard library |
-
-> **Windows:** `curses` is not bundled with Python on Windows. Run inside **WSL**,
-> or install a curses backport before launching.
 
 ---
 
-## Install & Run
+## Install & Play
+
+### Via npm (recommended)
 
 ```bash
-# clone
-git clone <repo-url>
-cd CLI-Ninja-Fight
+# play instantly, no install
+npx cli-ninja-fight
 
-# play
-python3 ninja.py
+# or install the `ninja` command globally
+npm install -g cli-ninja-fight
+ninja
 ```
 
-That's it — no virtualenv, no `pip install`. Pick a difficulty on the start screen
-and fight.
+Pick a difficulty on the start screen and fight.
+
+> **Note:** the game requires Python 3 on your `PATH`. The launcher checks for it
+> and tells you exactly what to install if it's missing.
 
 ---
 
@@ -93,9 +92,7 @@ and fight.
 | `Q` / `Esc` | Quit |
 
 Punch and kick have the **same range** — they differ in speed, power, and height,
-not reach.
-
-Movement is momentum-based: tap to build speed, release to glide to a halt.
+not reach. Movement carries momentum: tap to build speed, release to glide to a halt.
 
 ---
 
@@ -116,20 +113,20 @@ Two fighters start with full health. **Drop your opponent's health to zero to wi
 
 **Blocking has depth — a held guard is a spectrum, not an on/off switch:**
 
-- **Parry** — raise your guard *just* as the blow lands (a ~0.14s window) and you
-  take **zero damage**, refund stamina, and freeze the attacker wide open for a
-  free punish. The parried ninja flashes green.
+- **Parry** — raise your guard *just* as the blow lands and you take **zero damage**,
+  refund stamina, and freeze the attacker wide open for a free punish. The parried
+  ninja flashes green.
 - **Block** — hold a steady guard with stamina in the tank: most of the damage is
   soaked, but **chip** still leaks through, each hit costs stamina, and you're
   briefly locked out of countering.
-- **Guard break** — block on an empty tank and your guard **shatters**: real
-  damage plus a long, fully-punishable stun. Turtling on fumes gets you killed.
+- **Guard break** — block on an empty tank and your guard **shatters**: real damage
+  plus a long, fully-punishable stun. Turtling on fumes gets you killed.
 
-The AI reads for parries too — the harder the difficulty, the more often it will
-bait your swing and catch it clean.
+The opponent reads for parries too — the harder the difficulty, the more often it
+will bait your swing and catch it clean.
 
-> Land a grab and your ninja hoists the opponent overhead for a **kusti slam** —
-> heavy damage and a hard knockdown. Miss, and the long recovery is a free punish.
+> Land a grab and your ninja hoists the opponent overhead for a heavy slam and a
+> hard knockdown. Miss, and the long recovery is a free punish.
 
 Landing a clean hit staggers your opponent, cancels whatever they were doing, and
 knocks them back. Get hit yourself and the same happens to you — so whiffing an
@@ -170,30 +167,19 @@ Choose on the start screen with `↑`/`↓` or `1`–`3`, confirm with `Enter`.
 
 | Symptom | Fix |
 |---|---|
+| `Python 3 is required…` | Install Python 3 and make sure `python3` is on your `PATH`. |
 | `Terminal too small…` | Resize the window to at least **50 × 12** and relaunch. |
 | Garbled or no colors | Use a color-capable terminal; check `$TERM` (e.g. `xterm-256color`). |
-| `ModuleNotFoundError: _curses` (Windows) | Run under **WSL** or install a curses backport. |
+| Won't start on Windows | Run inside **WSL** — a native Windows terminal isn't supported. |
 | Input feels laggy | Avoid running over a slow/high-latency SSH session. |
 
 Quit any time with `Q` or `Esc`.
 
 ---
 
-## Project Layout
-
-```
-CLI-Ninja-Fight/
-├── ninja.py     # the entire game — engine, physics, AI, and rendering
-└── README.md
-```
-
-Single-file and self-contained by design: read it, tweak it, remix it.
-
----
-
 ## License
 
-Released for personal and educational use. See repository terms for details.
+MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 

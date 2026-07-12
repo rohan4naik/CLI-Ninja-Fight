@@ -1,0 +1,45 @@
+{
+  "name": "cli-ninja-fight",
+  "version": "1.0.0",
+  "description": "A terminal 1v1 ninja fighting game (punch / kick / grab / parry) rendered in pure ASCII, inspired by Shadow Fight.",
+  "bin": {
+    "ninja": "bin/cli.js"
+  },
+  "scripts": {
+    "start": "node bin/cli.js"
+  },
+  "files": [
+    "bin/cli.js",
+    "ninja.py",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "game",
+    "cli",
+    "terminal",
+    "ascii",
+    "fighting-game",
+    "ninja",
+    "curses",
+    "tui"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "author": "rohan4naik",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rohan4naik/CLI-Ninja-Fight.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rohan4naik/CLI-Ninja-Fight/issues"
+  },
+  "homepage": "https://github.com/rohan4naik/CLI-Ninja-Fight#readme"
+}
