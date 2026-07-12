@@ -9,7 +9,8 @@ Controls:
     s / down     crouch  (hold — dodges high attacks / punches)
     j            punch   (fast, short range, low damage, HIGH — whiffs on crouch)
     k            kick    (slow, long range, high damage, LOW — whiffs on jump)
-    space / l    block   (hold to reduce incoming damage; drains stamina)
+    space / l    block   (hold: chip + drain; TIME it to the hit for a parry)
+    g            grab    (throw; beats a block, whiffs on a jumper)
     q            quit
 
 Run:  python3 ninja.py
@@ -68,9 +69,25 @@ DIFFICULTY = {
                    aggr=(0.60, 0.75, 0.90), mistake=0.0, dmg=1.0),
 }
 
-BLOCK_REDUCTION = 0.8       # 80% damage blocked
+# --- Defense --------------------------------------------------------------
+# A held block is a spectrum, not a switch:
+#   * raise guard JUST as the blow lands  -> PARRY: no damage, attacker staggered
+#   * hold a steady guard with stamina    -> BLOCK: chip damage + pushback
+#   * block with the tank near empty       -> GUARD BREAK: guard shatters, big stun
+BLOCK_REDUCTION = 0.78      # steady block soaks 78% of the damage; the rest chips
 BLOCK_KB_SCALE = 0.35       # blocked hits shove far less
 HITSTUN = 0.22             # seconds a fighter is stunned after being hit
+
+PARRY_WINDOW = 0.14         # perfect-block window, measured from when guard rose
+PARRY_STAM_REFUND = 30.0    # a clean parry pays its stamina back, and then some
+PARRY_KB = 7.0              # the parried attacker is shoved off their own swing
+PARRY_STAGGER = 0.50        # ...and frozen wide open — the reward for good timing
+BLOCK_HIT_STAM = 12.0       # base stamina to soak one blocked hit
+BLOCK_HIT_STAM_SCALE = 0.7  # + this much per point of raw incoming damage
+GUARDBREAK_DMG = 0.55       # fraction of raw damage that leaks through a broken guard
+GUARDBREAK_STUN = 0.55      # long, fully-punishable stun when the guard shatters
+BLOCK_LOCK = 0.11           # guard recoil: can't counter-attack for this long
+PARRY_AI_SKILL = 0.7        # scales an AI's read into its odds of trying a late parry
 
 # --- Combat feel ----------------------------------------------------------
 HITSTOP_CLEAN = 0.07        # global freeze frames on a clean hit
@@ -108,6 +125,10 @@ class Fighter:
         self.state_until = 0.0
         self.has_hit = False          # attack already landed this swing?
         self.blocking = False
+        self.was_blocking = False     # guard state last frame (to time the parry window)
+        self.block_start = -1.0       # gt when the guard was raised
+        self.block_lock_until = 0.0   # guard recoil: no counter-attack until this
+        self.parry_flash = 0.0        # gt until which to draw the parry flash
 
         self.airborne = False         # mid-jump?
         self.height = 0.0             # rows above the ground
@@ -115,6 +136,8 @@ class Fighter:
         self.crouching = False
 
         self.ai_next_decision = 0.0
+        self.threat_seen = False       # AI: already reacted to the current incoming attack?
+        self.parry_armed = False       # AI: committed to a late parry on this attack?
 
     # --- state helpers ---
     def busy(self):
@@ -190,6 +213,8 @@ class Fighter:
     def start_attack(self, kind, now):
         if self.busy() or self.blocking or self.airborne or self.crouching:
             return
+        if now < self.block_lock_until:   # still recoiling from a blocked hit
+            return
         if not self.can_spend(ATTACKS[kind]["stamina"]):
             return
         self.spend(ATTACKS[kind]["stamina"])
@@ -198,19 +223,47 @@ class Fighter:
         self.has_hit = False
         self.state_until = now + ATTACKS[kind]["windup"]
 
-    def take_hit(self, dmg, now, knockback):
-        if self.blocking:
-            dmg *= (1 - BLOCK_REDUCTION)
-            knockback *= BLOCK_KB_SCALE
+    def guard_outcome(self, now, raw_dmg):
+        """Classify an incoming hit against a raised guard: parry / block / guardbreak."""
+        if now - self.block_start <= PARRY_WINDOW:
+            return "parry"
+        if self.stamina < BLOCK_HIT_STAM + raw_dmg * BLOCK_HIT_STAM_SCALE:
+            return "guardbreak"
+        return "block"
+
+    def get_parried(self, now):
+        """Frozen wide open after the foe perfect-blocks: the swing eats itself."""
+        self.attack = None
+        self.has_hit = True
+        self.state = "recovery"
+        self.state_until = now + PARRY_STAGGER
+        self.vx = -self.facing * PARRY_KB   # shoved back off the parried swing
+
+    def take_hit(self, dmg, now, knockback, guard="clean"):
+        """Apply a strike. guard in {clean, block, guardbreak}; parry is handled
+        by the attacker's get_parried() and never reaches here."""
+        if guard == "block":
+            # steady guard: chip damage + pushback, but footing and guard hold
+            self.spend(BLOCK_HIT_STAM + dmg * BLOCK_HIT_STAM_SCALE)
+            self.hp = max(0, self.hp - dmg * (1 - BLOCK_REDUCTION))
+            self.vx = knockback * BLOCK_KB_SCALE
+            self.block_lock_until = now + BLOCK_LOCK
+            return
+        if guard == "guardbreak":
+            # the guard shatters: partial damage now, long punishable stun
+            dmg *= GUARDBREAK_DMG
+            self.blocking = False
+            self.block_start = -1.0
+        # clean hit or shattered guard: heavy interrupt into hitstun / knockdown
         self.hp = max(0, self.hp - dmg)
-        # heavy interrupts: getting hit cancels your swing / jump into hitstun
         self.state = "hitstun"
         self.attack = None
         self.airborne = False
         self.height = 0.0
         self.vy = 0.0
         self.vx = knockback          # shoved back along the punch direction
-        self.state_until = now + HITSTUN
+        self.state_until = now + (GUARDBREAK_STUN if guard == "guardbreak"
+                                  else HITSTUN)
 
     def update_state(self, now):
         if now < self.state_until:
@@ -282,16 +335,16 @@ def spawn_burst(particles, x, y, direction, blood):
 class DamageNumber:
     """A damage figure that floats up from an impact and fades out."""
 
-    __slots__ = ("x", "y", "vy", "life", "max_life", "text", "blocked")
+    __slots__ = ("x", "y", "vy", "life", "max_life", "text", "kind")
 
-    def __init__(self, x, y, text, blocked):
+    def __init__(self, x, y, text, kind):
         self.x = float(x)
         self.y = float(y)
         self.vy = -6.0                 # rows/sec upward
         self.life = 0.8
         self.max_life = 0.8
         self.text = text
-        self.blocked = blocked
+        self.kind = kind               # clean | block | parry | guardbreak
 
     def update(self, dt):
         self.y += self.vy * dt
@@ -302,9 +355,16 @@ class DamageNumber:
         return self.life <= 0
 
 
-def spawn_damage(popups, x, y, dmg, blocked):
-    text = str(int(round(dmg))) if not blocked else f"-{int(round(dmg))}"
-    popups.append(DamageNumber(x, y, text, blocked))
+def spawn_damage(popups, x, y, dmg, kind="clean"):
+    if kind == "parry":
+        text = "PARRY!"
+    elif kind == "guardbreak":
+        text = f"BREAK -{int(round(dmg))}"
+    elif kind == "block":
+        text = f"-{int(round(dmg))}"
+    else:
+        text = str(int(round(dmg)))
+    popups.append(DamageNumber(x, y, text, kind))
 
 
 def gap(a, b):
@@ -378,10 +438,28 @@ def ai_think(ai, foe, now, left_wall, right_wall, diff):
             ai.crouching = True            # duck under the punch
             return
         ai.crouching = False
-        ai.blocking = r < 0.85 * read
-        if ai.blocking:
-            return
+        if foe.state == "windup":
+            # decide once, when the attack starts, whether to go for a late parry
+            if not ai.threat_seen:
+                ai.threat_seen = True
+                ai.parry_armed = random.random() < read * PARRY_AI_SKILL
+            if ai.parry_armed:
+                ai.blocking = False        # bait it: hold guard down through the windup
+                return
+            ai.blocking = r < 0.85 * read  # otherwise just turtle up early
+            if ai.blocking:
+                return
+        else:
+            # active frame: a parry-armed AI snaps its guard up right now
+            if ai.parry_armed:
+                ai.blocking = True         # fresh guard raise -> lands in the parry window
+                return
+            ai.blocking = r < 0.9 * read
+            if ai.blocking:
+                return
     else:
+        ai.threat_seen = False
+        ai.parry_armed = False
         ai.blocking = False
         ai.crouching = False
 
@@ -463,27 +541,46 @@ def resolve_hits(a, b, now, particles=None, ground_y=0, popups=None):
             dodged = (level == "high" and foe.height_level() == "crouch") or \
                      (level == "low" and foe.height_level() == "air")
             if in_range and not dodged:
-                blocked = foe.blocking
-                before = foe.hp
+                raw = info["damage"] * atk.dmg_scale
                 kb = atk.facing * info["knockback"]
-                foe.take_hit(info["damage"] * atk.dmg_scale, now, kb)
+                before = foe.hp
+                outcome = foe.guard_outcome(now, raw) if foe.blocking else "clean"
                 atk.has_hit = True
+                hit_y = ground_y - 2 - foe.jump_offset()
+
+                if outcome == "parry":
+                    # perfect block: no damage, attacker eats a stagger, guard refunds
+                    atk.get_parried(now)
+                    foe.stamina = min(MAX_STAM, foe.stamina + PARRY_STAM_REFUND)
+                    foe.parry_flash = now + 0.30
+                    hitstop = max(hitstop, HITSTOP_HEAVY)   # a beefy freeze sells it
+                    shake = max(shake, SHAKE_KICK)
+                    if particles is not None:
+                        spawn_burst(particles, foe.x + 1, hit_y,
+                                    direction=-atk.facing, blood=False)
+                    if popups is not None:
+                        spawn_damage(popups, foe.x + 1, hit_y - 1, 0, "parry")
+                    continue
+
+                foe.take_hit(raw, now, kb, guard=outcome)
                 dealt = before - foe.hp
                 # combat-feel: freeze frames + screen shake scaled to the blow
-                if blocked:
+                if outcome == "block":
                     hitstop = max(hitstop, HITSTOP_BLOCK)
                     shake = max(shake, SHAKE_BLOCK)
+                elif outcome == "guardbreak":
+                    hitstop = max(hitstop, HITSTOP_HEAVY)
+                    shake = max(shake, SHAKE_KICK)
                 else:
                     hitstop = max(hitstop, HITSTOP_HEAVY if atk.attack == "kick"
                                   else HITSTOP_CLEAN)
                     shake = max(shake, SHAKE_KICK if atk.attack == "kick"
                                 else SHAKE_PUNCH)
-                hit_y = ground_y - 2 - foe.jump_offset()
                 if particles is not None:
                     spawn_burst(particles, foe.x + 1, hit_y,
-                                direction=atk.facing, blood=not blocked)
+                                direction=atk.facing, blood=outcome != "block")
                 if popups is not None:
-                    spawn_damage(popups, foe.x + 1, hit_y - 1, dealt, blocked)
+                    spawn_damage(popups, foe.x + 1, hit_y - 1, dealt, outcome)
     return hitstop, shake
 
 
@@ -548,7 +645,7 @@ def draw_stam(win, y, x, stam, width, color):
 
 
 def draw(win, player, ai, ground_y, msg=None, particles=None, popups=None,
-         shake=(0, 0)):
+         shake=(0, 0), now=0.0):
     win.erase()
     h, w = win.getmaxyx()
     sy, sx = shake
@@ -584,6 +681,8 @@ def draw(win, player, ai, ground_y, msg=None, particles=None, popups=None,
                 attr = col | curses.A_BOLD
                 if f.state == "hitstun":
                     attr = red | curses.A_BOLD
+                elif now < f.parry_flash:      # bright green flash on a clean parry
+                    attr = green | curses.A_BOLD | curses.A_REVERSE
                 try:
                     win.addstr(y, x, line, attr)
                 except curses.error:
@@ -606,7 +705,11 @@ def draw(win, player, ai, ground_y, msg=None, particles=None, popups=None,
             py = int(round(d.y)) + sy
             px = int(round(d.x - len(d.text) / 2)) + sx
             if 0 <= py < h and 0 <= px < w - len(d.text):
-                if d.blocked:
+                if d.kind == "parry":
+                    attr = green | curses.A_BOLD
+                elif d.kind == "guardbreak":
+                    attr = yellow | curses.A_BOLD | curses.A_REVERSE
+                elif d.kind == "block":
                     attr = white | curses.A_DIM
                 else:
                     frac = d.life / d.max_life if d.max_life else 0
@@ -617,7 +720,8 @@ def draw(win, player, ai, ground_y, msg=None, particles=None, popups=None,
                     pass
 
     # hint / message line
-    hint = "a/d move  w jump  s crouch  j punch  k kick  space block  q quit"
+    hint = ("a/d move  w jump  s crouch  j punch  k kick  g grab  "
+            "space block (time it = PARRY)  q quit")
     win.addstr(ground_y + 2, 2, hint[: w - 4], curses.A_DIM)
     if msg:
         win.addstr(ground_y // 2, max(0, (w - len(msg)) // 2), msg,
@@ -959,6 +1063,12 @@ def game(stdscr):
             if ai.stamina <= 0:
                 ai.blocking = False
 
+        # stamp when each guard was raised — this drives the parry window
+        for f in (player, ai):
+            if f.blocking and not f.was_blocking:
+                f.block_start = gt
+            f.was_blocking = f.blocking
+
         # --- state machines ---
         player.update_state(gt)
         ai.update_state(gt)
@@ -1028,7 +1138,7 @@ def game(stdscr):
             winner = "AI WINS!"
 
         draw(stdscr, player, ai, ground_y, particles=particles, popups=popups,
-             shake=shake)
+             shake=shake, now=gt)
 
         # --- frame pacing ---
         elapsed = time.perf_counter() - real_now

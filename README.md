@@ -89,7 +89,7 @@ and fight.
 | `J` | Punch — fast, light, strikes **high** |
 | `K` | Kick — slower, heavy, strikes **low** |
 | `G` | Grab — a throw that beats a block *(but whiffs if they jump)* |
-| `Space` / `L` | Block *(hold)* — greatly reduces incoming damage |
+| `Space` / `L` | Block *(hold)* — soaks most damage; **time it to the hit for a PARRY** |
 | `Q` / `Esc` | Quit |
 
 Punch and kick have the **same range** — they differ in speed, power, and height,
@@ -113,6 +113,20 @@ Two fighters start with full health. **Drop your opponent's health to zero to wi
 3. **Resources** — blocking bleeds off damage but drains stamina and locks you out
    of attacking. Every swing, hop, and throw costs stamina too, so reckless offense
    leaves you empty and open.
+
+**Blocking has depth — a held guard is a spectrum, not an on/off switch:**
+
+- **Parry** — raise your guard *just* as the blow lands (a ~0.14s window) and you
+  take **zero damage**, refund stamina, and freeze the attacker wide open for a
+  free punish. The parried ninja flashes green.
+- **Block** — hold a steady guard with stamina in the tank: most of the damage is
+  soaked, but **chip** still leaks through, each hit costs stamina, and you're
+  briefly locked out of countering.
+- **Guard break** — block on an empty tank and your guard **shatters**: real
+  damage plus a long, fully-punishable stun. Turtling on fumes gets you killed.
+
+The AI reads for parries too — the harder the difficulty, the more often it will
+bait your swing and catch it clean.
 
 > Land a grab and your ninja hoists the opponent overhead for a **kusti slam** —
 > heavy damage and a hard knockdown. Miss, and the long recovery is a free punish.
